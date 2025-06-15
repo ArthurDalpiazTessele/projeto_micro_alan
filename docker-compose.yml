@@ -1,0 +1,149 @@
+version: '3.8'
+
+services:
+  postgres-usuario:
+    image: postgres:latest
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: usuario
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_usuario_data:/var/lib/postgresql/data
+    networks:
+      - backend
+
+  postgres-sala:
+    image: postgres:latest
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: sala
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_sala_data:/var/lib/postgresql/data
+    networks:
+      - backend
+
+  postgres-reserva:
+    image: postgres:latest
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: reserva_sala_db
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres_reserva_data:/var/lib/postgresql/data
+    networks:
+      - backend
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"     # Porta da fila
+      - "15672:15672"   # UI web do RabbitMQ
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  usuario:
+    build: ./usuario
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-usuario:5432/usuario
+      SPRING_DATASOURCE_USERNAME: admin
+      SPRING_DATASOURCE_PASSWORD: admin
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USERNAME: guest
+      RABBITMQ_PASSWORD: guest
+    depends_on:
+      postgres-usuario:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - backend
+    restart: unless-stopped
+
+  sala:
+    build: ./sala
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-sala:5432/sala
+      SPRING_DATASOURCE_USERNAME: admin
+      SPRING_DATASOURCE_PASSWORD: admin
+    depends_on:
+      postgres-sala:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - backend
+    restart: unless-stopped
+
+  reserva:
+    build: ./reserva
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-reserva:5432/reserva_sala_db
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: postgres
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USERNAME: guest
+      RABBITMQ_PASSWORD: guest
+    depends_on:
+      postgres-reserva:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+      usuario:
+        condition: service_started
+      sala:
+        condition: service_started
+    networks:
+      - backend
+    restart: unless-stopped
+  nginx:
+    image: nginx:latest
+    container_name: nginx-gateway
+    command: /bin/bash -c "sleep 15 && nginx -g 'daemon off;'"
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      usuario:
+        condition: service_started
+      sala:
+        condition: service_started
+      reserva:
+        condition: service_started
+    networks:
+      - backend
+    restart: always
+
+  adminer:
+    image: adminer
+    ports:
+      - "4040:8080"
+    networks:
+      - backend
+    restart: unless-stopped
+
+networks:
+  backend:
+    driver: bridge
+
+volumes:
+  postgres_usuario_data:
+  postgres_sala_data:
+  postgres_reserva_data:
